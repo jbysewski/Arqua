@@ -338,7 +338,7 @@ sub createFunctionGraph {
 			if ($package->{calculatedComplexity} > 0) {
 				my $functionComplexityString = sprintf("%.0f", $package->{calculatedComplexity}*100);
 				my $xsString = sprintf("%.0f", $package->{complexitySmells});
-				$report .= "() C=" . $functionComplexityString . "%";
+				$report .= " C=" . $functionComplexityString . "%";
 				$report .= ", CS=" . $xsString;
 			}
 			$graph .= $package->{name} . "()" . $report . "\\n";
