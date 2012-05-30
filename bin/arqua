@@ -192,8 +192,8 @@ sub calculatePackage {
 	$package->{tangleSmells} = $package->{size}*$package->{calculatedTangle};
 	$package->{complexitySmells} = $package->{size}*$package->{calculatedComplexity};
 	$package->{totSmells} += $package->{complexitySmells};
-	$package->{totSmells} += $package->{tangleSmells}; 
-}	
+	$package->{totSmells} += $package->{tangleSmells};
+}
 
 sub calculateFunction {
 	my ($function) = @_;
