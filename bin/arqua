@@ -85,7 +85,7 @@ sub calculateTangle {
 	my ($tangles, $edges) = @_;
 	my $retval = 0;
 	if ($edges > 0) {
-		$retval = $tangles/$edges;
+		$retval = $tangles/$edges*2;
 	}
 }
 
