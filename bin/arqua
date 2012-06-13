@@ -160,7 +160,7 @@ sub calculatePackage {
 				}
 			}
 			unless ($calleefound) {
-				unless (exists($package->{nodes}->{depfuncs}->{$calleefunc})) {
+				unless (exists($package->{depfuncs}->{$calleefunc})) {
 					$package->{depfuncs}->{$calleefunc} = 0;
 				}
 				$package->{depfuncs}->{$calleefunc} += $depnbr;
