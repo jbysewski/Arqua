@@ -3,11 +3,19 @@ use strict;
 use List::Util qw[min max];
 use Getopt::Long;
 
+my $packageDrawer = \&drawEmpty;
+my $dependencyDrawer = \&drawEmpty;
+my $functionDrawer = \&drawEmpty;
+my $fileDrawer = \&drawEmpty;
+
 sub initPackage {
-	my ($packageName, $parent) = @_;
+	my ($name, $location, $parent) = @_;
 	return {
-		name => $packageName,
 		parent => $parent,
+		type => "package",
+		name => $name,
+		location => $location,
+		path => $location . "/" . $name,
 		tangle => 0,
 		complexity => 0,
 		edges => 0,
@@ -22,16 +30,53 @@ sub initPackage {
 		tangleSmells => 0,
 		complexitySmells => 0,
 		level => 1,
-		lowLevel => 0
+		draw => sub {
+			return $packageDrawer->(@_);
+		},
+		drawDependencies => sub {
+			return $dependencyDrawer->(@_);
+		},
+	};
+}
+
+sub initFile {
+	my ($name, $location, $parent) = @_;
+	return {
+		parent => $parent,
+		type => "file",
+		name => $name,
+		location => $location,
+		path => $location . "/" . $name,
+		tangle => 0,
+		complexity => 0,
+		edges => 0,
+
+		functions => {},
+		size => 0,
+		nodes => {},
+		depfuncs => {},
+		circ => {},
+		totSize => 0,
+		totSmells => 0,
+		tangleSmells => 0,
+		complexitySmells => 0,
+		draw =>  sub {
+			return $fileDrawer->(@_);
+		},
+		drawDependencies => sub {
+			return $dependencyDrawer->(@_);
+		}
 	};
 }
 
 sub initFunction {
-	my ($functionName, $parent) = @_;
+	my ($name, $location) = @_;
 	return {
-		name => $functionName,
-		functions => {$functionName => 1},
-		parent => $parent,
+		type => "function",
+		name => $name,
+		functions => {$name => 1},
+		location => $location,
+		path => $location . "/" . $name,
 		complexity => 0,
 		size => 0,
 		totSize => 0,
@@ -41,7 +86,10 @@ sub initFunction {
 		depfuncs => {},
 		tangleSmells => 0,
 		complexitySmells => 0,
-		level => 0
+		draw =>  sub {
+			return $functionDrawer->(@_);
+		},
+		drawDependencies => \&drawFunctionDependencies
 	};
 }
 
@@ -69,406 +117,542 @@ sub calculateTangle {
 	return $edges > 0 ? $tangles/$edges*2 : 0;
 }
 
-sub parseExpandLineFunction {
+sub increaseComplexity {
+	my ($node) = @_;
+	$node->{complexity} += 1;
+}
+
+sub increaseSize {
+	my ($node) = @_;
+	$node->{size} += 1;
+	$node->{totSize} += 1;
+}
+
+sub increaseDependencies {
+	my ($node, $callee) = @_;
+	unless (exists($node->{depfuncs}->{$callee})) {
+		$node->{depfuncs}->{$callee} = 0;
+	}
+	$node->{depfuncs}->{$callee} += 1;
+}
+
+sub parseFunction {
 	my ($parent, $line, $currentFunction) = @_;
 	my $nodes = $parent->{nodes};
+
 	if ($line =~ /^;; Function (.*)\s+\((\S+)(,.*)?\)\s*$/) {
-		my $functionName = $2;
-		unless (exists($nodes->{$functionName})) {
-			$nodes->{$functionName} = initFunction($functionName, $parent);
+		my $name = $2;
+		unless (exists($nodes->{$name})) {
+			$nodes->{$name} = initFunction($name,
+				$parent->{path});
 		}
-		return $functionName;
-	} elsif ($currentFunction ne "") {
-		if (exists($nodes->{$currentFunction})) {
-			if ($line =~ /^.*\(call.*"(.*)".*$/) {
-				unless (exists($nodes->{$currentFunction}->{depfuncs}->{$1})) {
-					$nodes->{$currentFunction}->{depfuncs}->{$1} = 0;
-				}
-				$nodes->{$currentFunction}->{depfuncs}->{$1} += 1;
-			} elsif ($line =~ /^.*\(symbol_ref.*"(.*)".*$/) {
-				unless (exists($nodes->{$currentFunction}->{depfuncs}->{$1})) {
-					$nodes->{$currentFunction}->{depfuncs}->{$1} = 0;
-				}
-				$nodes->{$currentFunction}->{depfuncs}->{$1} += 1;
-			}
-			if ($line =~ /^.*\(if_then_else.*$/) {
-				$nodes->{$currentFunction}->{complexity} += 1;
-			}
-			if ($line =~ /^.*\(insn.*/) {
-				$nodes->{$currentFunction}->{size} += 1;
-				$nodes->{$currentFunction}->{totSize} += 1;
-			}
+		return $name;
+	} elsif ($currentFunction ne "" and
+		exists($nodes->{$currentFunction})) {
+		my $node = $nodes->{$currentFunction};
+
+		if ($line =~ /^.*\((call|symbol_ref).*"(.*)".*$/) {
+			increaseDependencies($node, $2);
+		}
+
+		if ($line =~ /^.*\(if_then_else.*$/) {
+			increaseComplexity($node);
+		}
+
+		if ($line =~ /^.*\(insn.*/) {
+			increaseSize($node);
 		}
 	}
 	return $currentFunction;
 }
 
-sub parseExpandLinePackage {
-	my ($package, $path, $line, $currentFunction) = @_;
-	if ($path) {
-		my ($subPackageName, $remainingPath) = split(/\//, $path, 2);
-		unless (exists($package->{nodes}->{$subPackageName})) {
-			$package->{nodes}->{$subPackageName} = initPackage($subPackageName, $package);
-		}
-		return parseExpandLinePackage($package->{nodes}->{$subPackageName}, $remainingPath, $line, $currentFunction);
+sub parseNode {
+	my ($node, $path, $line, $currentFunction) = @_;
+	my ($subNodeName, $remainingPath) = split(/\//, $path, 2);
+
+	unless (exists($node->{nodes}->{$subNodeName})) {
+		$node->{nodes}->{$subNodeName} = $remainingPath ?
+			initPackage($subNodeName, $node->{path}, $node) :
+			initFile($subNodeName, $node->{path}, $node);
 	}
-	return parseExpandLineFunction($package, $line, $currentFunction);
+	return parse(
+		$node->{nodes}->{$subNodeName},
+		$remainingPath, $line, $currentFunction);
 }
 
-sub calculatePackage {
-	my ($package, $functionTolerance, $tolerance) = @_;
-	foreach my $child (values %{$package->{nodes}}) {
-		calculateNode($child, $functionTolerance, $tolerance);
-		foreach my $function (keys %{$child->{functions}}) {
-			$package->{functions}->{$function} = 1;
-		}
-		$package->{size} += $child->{size};
-		$package->{totSmells} += $child->{totSmells};
-		if ($child->{level} + 1 >= $package->{level}) {
-			$package->{level} = $child->{level} + 1;
-		}
-		if ($child->{level} + 1 < $package->{lowLevel} or $package->{lowLevel} == 0) {
-			$package->{lowLevel} = $child->{level} + 1;
-		}
-	}
-	$package->{totSize} = $package->{size}*2;
-	foreach my $callernode (values %{$package->{nodes}}) {
+sub parse {
+	my ($node, $path, $line, $currentFunction) = @_;
+	return $path ?
+		parseNode($node, $path, $line, $currentFunction) :
+		parseFunction($node, $line, $currentFunction);
+}
+
+sub calculateNodeCalls {
+	my ($node) = @_;
+	foreach my $callernode (values %{$node->{nodes}}) {
 		 while (my ($calleefunc, $calleefuncnbr) = each(%{$callernode->{depfuncs}})) {
 			my $calleefound = 0;
-			while (my ($calleenodename, $calleenode) = each(%{$package->{nodes}})) {
+			while (my ($calleenodename, $calleenode) = each(%{$node->{nodes}})) {
 				if (exists($calleenode->{functions}->{$calleefunc})) {
 					unless (exists($callernode->{deps}->{$calleenodename})) {
 						$callernode->{deps}->{$calleenodename} = 0;
-						$package->{complexity} += 1;
+						$node->{complexity} += 1;
 					}
 					$callernode->{deps}->{$calleenodename} += $calleefuncnbr;
-					$package->{edges} += $calleefuncnbr;
+					$node->{edges} += $calleefuncnbr;
 					$calleefound = 1;
 				}
 			}
 			unless ($calleefound) {
-				unless (exists($package->{depfuncs}->{$calleefunc})) {
-					$package->{depfuncs}->{$calleefunc} = 0;
+				unless (exists($node->{depfuncs}->{$calleefunc})) {
+					$node->{depfuncs}->{$calleefunc} = 0;
 				}
-				$package->{depfuncs}->{$calleefunc} += $calleefuncnbr;
+				$node->{depfuncs}->{$calleefunc} += $calleefuncnbr;
 			}
 		}
 	}
+}
+
+sub calculateNodeTangles {
+	my ($node) = @_;
 	my $tmpTangle = 0;
-	while (my ($callername, $caller) = each(%{$package->{nodes}})) {
+	while (my ($callername, $caller) = each(%{$node->{nodes}})) {
 		while (my ($calleename, $callee) = each(%{$caller->{deps}})) {
 			if (exists($caller->{deps}->{$calleename}) and
-				exists($package->{nodes}->{$calleename}->{deps}->{$callername})) {
+				exists($node->{nodes}->{$calleename}->{deps}->{$callername})) {
 				my $callernbr = $callee;
-				my $calleenbr = $package->{nodes}->{$calleename}->{deps}->{$callername};
+				my $calleenbr = $node->{nodes}->{$calleename}->{deps}->{$callername};
 				if ($callernbr > $calleenbr) {
-					if (exists($package->{nodes}->{$calleename})) {
-						$package->{nodes}->{$calleename}->{circ}->{$callername} = 1;
+					if (exists($node->{nodes}->{$calleename})) {
+						$node->{nodes}->{$calleename}->{circ}->{$callername} = 1;
 					}
 				} elsif ($callernbr < $calleenbr) {
 					$caller->{circ}->{$calleename} = 1;
 				} else {
 					$caller->{circ}->{$calleename} = 1;
-					if (exists($package->{nodes}->{$calleename})) {
-						$package->{nodes}->{$calleename}->{circ}->{$callername} = 1;
+					if (exists($node->{nodes}->{$calleename})) {
+						$node->{nodes}->{$calleename}->{circ}->{$callername} = 1;
 					}
 				}
 				$tmpTangle += min($callernbr, $calleenbr);
 			}
 		}
 	}
-	$package->{tangle} = $tmpTangle/2;
-	$package->{calculatedTangle} = calculateTangle($package->{tangle}, $package->{edges});
-	$package->{calculatedComplexity} = calculateComplexity($package->{complexity}, $tolerance);
-	$package->{tangleSmells} = $package->{size}*$package->{calculatedTangle};
-	$package->{complexitySmells} = $package->{size}*$package->{calculatedComplexity};
-	$package->{totSmells} += $package->{complexitySmells};
-	$package->{totSmells} += $package->{tangleSmells};
+	$node->{tangle} = $tmpTangle/2;
+	$node->{calculatedTangle} =
+		calculateTangle($node->{tangle}, $node->{edges});
+	$node->{tangleSmells} = $node->{size}*$node->{calculatedTangle};
+	$node->{totSmells} += $node->{tangleSmells};
+}
+sub calculateNodeComplexity {
+	my ($node, $tolerance) = @_;
+	$node->{calculatedComplexity} =
+		calculateComplexity($node->{complexity}, $tolerance);
+	$node->{complexitySmells} = $node->{size}*$node->{calculatedComplexity};
+	$node->{totSmells} += $node->{complexitySmells};
+
+}
+sub calculateNode {
+	my ($node, $functionTolerance, $tolerance) = @_;
+	foreach my $child (values %{$node->{nodes}}) {
+		$child->{level} = $node->{level} + 1;
+		calculate($child, $functionTolerance, $tolerance);
+		foreach my $function (keys %{$child->{functions}}) {
+			$node->{functions}->{$function} = 1;
+		}
+		$node->{size} += $child->{size};
+		$node->{totSmells} += $child->{totSmells};
+	}
+	$node->{totSize} = $node->{size}*2;
+	calculateNodeCalls($node);
+	calculateNodeTangles($node);
+	calculateNodeComplexity($node, $tolerance);
 }
 
 sub calculateFunction {
 	my ($function, $tolerance) = @_;
-	$function->{calculatedComplexity} = calculateComplexity($function->{complexity}, $tolerance);
-	$function->{complexitySmells} = $function->{size}*$function->{calculatedComplexity};
+	$function->{calculatedComplexity} =
+		calculateComplexity($function->{complexity}, $tolerance);
+	$function->{complexitySmells} =
+		$function->{size}*$function->{calculatedComplexity};
 	$function->{totSmells} = $function->{complexitySmells};
-	$function->{level} = 0;
 }
 
-sub calculateNode {
-	my ($node, $functionTolerance, $packageTolerance) = @_;
-	my $calculator = exists($node->{nodes}) ? \&calculatePackage : \&calculateFunction;
-	$calculator->($node, $functionTolerance, $packageTolerance);
+sub calculate {
+	my ($node, $functionTolerance, $nodeTolerance) = @_;
+	my $calculator = exists($node->{nodes}) ?
+		\&calculateNode : \&calculateFunction;
+	$calculator->($node, $functionTolerance, $nodeTolerance);
 }
 
-sub extractPackageSmells {
-	my ($parent, $package, $smells) = @_;
-	if (exists($package->{name})) {
-		my $name = $parent . "/" . $package->{name};
-		push (@{$smells}, initSmell($name, "Tangle", $package->{tangleSmells}));
-		push (@{$smells}, initSmell($name, "Complexity", $package->{complexitySmells}));
-		if (exists($package->{nodes})) {
-			foreach my $node (values %{$package->{nodes}}) {
-				extractPackageSmells($name, $node, $smells);
-			}
-		}
-	}
+sub drawComplexitySmells {
+	my ($node) = @_;
+	return "CS=" . sprintf("%.0f", $node->{complexitySmells});
 }
 
-sub createSortedSmellsList {
+sub drawComplexityPercentage {
+	my ($node) = @_;
+	return "C=" . sprintf("%.0f", $node->{calculatedComplexity}*100) . "%";
+}
+
+sub drawTangleSmells {
+	my ($node) = @_;
+	return "TS=" . sprintf("%.0f", $node->{tangleSmells});
+}
+
+sub drawTanglePercentage {
+	my ($node) = @_;
+	return "T=" . sprintf("%.0f", $node->{calculatedTangle}*100) . "%";
+}
+
+sub drawComplexityLabel {
+	my ($node) = @_;
+	return (($node->{complexitySmells} > 0) ?
+		(drawComplexityPercentage($node) .
+		", ".
+		drawComplexitySmells($node)) : "");
+}
+
+sub drawTangleLabel {
+	my ($node) = @_;
+	return ($node->{tangleSmells} > 0) ?
+		drawTanglePercentage($node) .
+		", ".
+		drawTangleSmells($node) : "";
+}
+
+sub drawReportLabel {
+	my ($node, $glue) = @_;
+	$glue = (($node->{tangleSmells} > 0) and
+		($node->{complexitySmells} > 0)) ?
+		$glue : "";
+	return drawComplexityLabel($node) .
+		$glue .
+		drawTangleLabel($node);
+}
+
+sub drawNameLabel {
+	my ($node) = @_;
+	return $node->{name};
+}
+
+sub drawReportColor {
+	my ($node) = @_;
+	return ($node->{tangleSmells} > 0 or $node->{complexitySmells} > 0) ?
+		"fontcolor=crimson" :
+		"fontcolor=black";
+}
+
+sub drawDependencyColor {
+	my ($node, $callee) = @_;
+	return exists($node->{circ}->{$callee}) ?
+		", color=crimson, fontcolor=crimson, style=bold" : "";
+}
+
+sub drawDependency {
+	my ($node, $propertyDrawer, $callee, $levels, $root) = @_;
+	return "\"" . $node->{path} ."\"" . "->" .
+		"\"" . $node->{location} . "/" . $callee . "\"" .
+		" [label=" . $node->{deps}->{$callee} . " " .
+		$propertyDrawer->($node, $callee, $levels, $root) .
+		drawDependencyColor($node, $callee) .
+		"];\n";
+}
+
+sub drawFunctionDependencies {
+	my ($node, $levels, $root) = @_;
+	return join("", map({
+		drawDependency($node, \&drawEmpty, $_, $levels, $root);}
+		keys %{$node->{deps}}));
+}
+
+sub drawDependencies {
+	my ($node, $propertyDrawer, $levels, $root) = @_;
+	return join("", map({
+		drawDependency($node, $propertyDrawer, $_, $levels, $root);}
+		keys %{$node->{deps}}));
+}
+
+sub drawFilteredDependencies {
+	my ($node, $propertyDrawer, $filter, $levels, $root) = @_;
+	return join("", map({
+		$filter->($node, $_) ?
+		drawDependency($node, $propertyDrawer, $_, $levels, $root) :
+		"";}
+		keys %{$node->{deps}}));
+}
+
+sub typeFilter {
+	my ($node, $callee, $filter) = @_;
+	return ($node->{parent}->{nodes}->{$callee}->{type} =~ /$filter/);
+}
+
+sub fileFilter {
+	my ($node, $callee) = @_;
+	typeFilter($node, $callee, "package");
+}
+
+sub packageFilter {
+	my ($node, $callee) = @_;
+	typeFilter($node, $callee, "file");
+}
+
+sub drawDependencyHead {
+	my ($node, $callee) = @_;
+	return "lhead=\"cluster_" . $node->{location} . "/" . $callee . "\"";
+}
+
+sub drawDependencyTail {
+	my ($node, $callee) = @_;
+	return "ltail=\"cluster_" . $node->{path} . "\"";
+}
+
+sub checkIterate {
+	my ($node, $levels, $root) = @_;
+
+	$node->{iterate} = (($node->{level} < $levels) ?
+		(exists($node->{iterate}) ?
+		$node->{iterate} :
+		drawIterate($node, $levels, $root)) :
+		"");
+	return $node->{iterate} ne "";
+}
+
+sub drawDependenciesHeadTail {
+	my ($node, $callee, $levels, $root) = @_;
+	my $tail = checkIterate($node,
+		$levels, $root);
+	my $head = checkIterate($node->{parent}->{nodes}->{$callee},
+		$levels, $root);
+	my $dependencies = "";
+	$dependencies .= $tail ? drawDependencyTail($node, $callee) : "";
+	$dependencies .= ($tail and $head)? ", " : "";
+	$dependencies .= $head ? drawDependencyHead($node, $callee) : "";
+	return $dependencies;
+}
+
+sub drawCheckedDependencies {
+	my ($node, $levels, $root) = @_;
+	return drawDependencies($node,
+		\&drawDependenciesHeadTail,
+		$levels, $root);
+}
+
+sub drawCheckedNotPackagesDependencies {
+	my ($node, $levels, $root) = @_;
+	return drawFilteredDependencies($node,
+		\&drawDependenciesHeadTail,
+		\&packageFilter, $levels, $root);
+}
+
+sub drawCheckedNotFilesDependencies {
+	my ($node, $levels, $root) = @_;
+	return drawFilteredDependencies($node,
+		\&drawDependenciesHeadTail,
+		\&fileFilter, $levels, $root);
+}
+
+sub drawLeafPackageHeader {
 	my ($package) = @_;
-	my $smells = [];
-	extractPackageSmells("", $package, $smells);
-	return [sort {$b->{value} <=> $a->{value}} @{$smells}];
+	return "\"" . $package->{path} . "\"" .
+		" [" . drawReportColor($package) .
+		", label=\"" . drawNameLabel($package) . "\\n" .
+		drawReportLabel($package, "\\n") .
+		"\", shape=tab, style=filled];\n";
 }
 
-sub drawFunctionList {
-	my ($package) = @_;
-	my $graph = "";
-	my $report = "";
-	if ($package->{calculatedComplexity} > 0) {
-		my $functionComplexityString = sprintf("%.0f", $package->{calculatedComplexity}*100);
-		my $xsString = sprintf("%.0f", $package->{complexitySmells});
-		$report .= " C=" . $functionComplexityString . "%";
-		$report .= ", CS=" . $xsString;
-	}
-	$graph .= $package->{name} . "()" . $report . "\\n";
-	return $graph;
+sub drawLeafPackage {
+	my ($package, $levels, $root) = @_;
+	return drawLeafPackageHeader($package) .
+		$package->{drawDependencies}($package, $levels, $root);
 }
 
-
-sub drawLeafPackageGraph {
-	my ($package, $prefix, $functionDrawer, $start, $reportLabel, $fontColor) = @_;
-	my $graph = "PKG_" . $prefix . $package->{name};
-	$graph .= " [" . $fontColor . ", label=\"{" . $package->{name} . "|" . $reportLabel . "|";
-	if ($package->{level} == 1) {
-		foreach my $subPackage (values %{$package->{nodes}}) {
-			$graph .= $functionDrawer->($subPackage, $prefix);
-		}
-	}
-	$graph .= "}\", shape=record, style=filled";
-	$graph .= "];\n";
-	foreach my $callee (keys %{$package->{deps}}) {
-		my $calleename = $prefix;
-		if ($package->{parent}->{nodes}->{$callee}->{level} >= $start) {
-			$calleename .= $callee;
-		}
-		$graph .= "PKG_" . $prefix . $package->{name} . "->PKG_" . $calleename;
-		$graph .= "[label=" . $package->{deps}->{$callee};
-		if ($package->{parent}->{nodes}->{$callee}->{level} > $start) {
-			$graph .= ", lhead=cluster_" . $prefix . $callee;
-		}
-		if (exists($package->{circ}->{$callee})) {
-			$graph .= ", color=crimson, fontcolor=crimson, style=bold";
-		}
-		$graph .= "];\n";
-	}
-	return $graph;
+sub drawNodeHeader {
+	my ($node, $levels, $root) = @_;
+	return "subgraph \"cluster_" . $node->{path} . "\"" .
+		" {\n" . drawReportColor($node) . ";label=\"" .
+		drawNameLabel($node) .
+		"\\n" . drawReportLabel($node, ", ") . "\";\n" .
+		"\"" . $node->{path} . "\"" .
+		" [style=invisible];\n" .
+		$node->{iterate} . "}\n";
 }
 
-sub drawNodePackageGraph {
-	my ($package, $prefix, $functionDrawer, $start, $stop, $root, $packagePath, $reportLabel, $fontColor) = @_;
-	my $graph = "";
-	my $subGraph = join("", map(
-		{ drawGraph($_, $packagePath, $functionDrawer, $start, $stop, $root);
-	} values %{$package->{nodes}}));
-	unless (index($packagePath, $root) eq 0 and ($package->{level} <= $stop or $stop eq 0)) {
-		return $subGraph;
-	}
-	$graph = "subgraph cluster_" . $packagePath . " {\n";
-	$graph .= $fontColor . ";label=\"" . $package->{name} . "\\n" . $reportLabel . "\";\n";
-	if ($package->{parent}->{lowLevel} == $package->{parent}->{level}) {
-		$graph .= "PKG_" . $packagePath . " [label=\"" . $package->{parent}->{lowLevel} . " " . $package->{parent}->{level}  . "\", style=invisible];\n";
-	} else {
-		$graph .= "PKG_" . $prefix . $package->{name};
-		$graph .= " [" . $fontColor . ", label=\"{" . $package->{name} .  " (self)" . "|" . $reportLabel . "|";
-		if ($package->{level} == 1) {
-			foreach my $subPackage (values %{$package->{nodes}}) {
-				$graph .= $functionDrawer->($subPackage, $prefix);
-			}
-		}
-		$graph .= "}\", shape=record, style=filled";
-		$graph .= "];\n";
-	}
-	$graph .= $subGraph;
-	$graph .= "}\n";
-	foreach my $callee (keys %{$package->{deps}}) {
-		my $calleename = $prefix;
-		if ($package->{parent}->{nodes}->{$callee}->{level} >= $start) {
-			$calleename .= $callee;
-		}
-		$graph .= "PKG_" . $packagePath . "->PKG_" . $calleename;
-		$graph .= " [ltail=cluster_" . $packagePath;
-		if ($package->{parent}->{nodes}->{$callee}->{level} > $start) {
-			$graph .= ", lhead=cluster_" . $prefix . $callee;
-		}
-		$graph .= ", label=" . $package->{deps}->{$callee};
-		if (exists($package->{circ}->{$callee})) {
-			$graph .= ", color=crimson, fontcolor=crimson, style=bold";
-		}
-		$graph .= "];\n";
-	}
-	return $graph;
+sub drawNode {
+	my ($node, $levels, $root) = @_;
+	return drawNodeHeader($node, $levels, $root) .
+		$node->{drawDependencies}($node, $levels, $root)
 }
 
-sub drawPackageGraph {
-	my ($package, $prefix, $functionDrawer, $start, $stop, $root) = @_;
-	my $graph = "";
-	my $reportLabel = "";
-	my $fontColor = "fontcolor=black";
-
-	if ($package->{level} < $start) {
-		return "";
-	}
-
-	if ($package->{complexitySmells} > 0) {
-		my $packageComplexityString = sprintf("%.0f", $package->{calculatedComplexity}*100);
-		my $cxsString = sprintf("%.0f", $package->{complexitySmells});
-		$reportLabel .= "C=" . $packageComplexityString . "%";
-		$reportLabel .= ", CS=" . $cxsString;
-	}
-
-	if ($package->{tangleSmells} > 0) {
-		my $packageTangleString = sprintf("%.0f", $package->{calculatedTangle}*100);
-		my $txsString = sprintf("%.0f", $package->{tangleSmells});
-		$reportLabel .= " T=" . $packageTangleString . "%";
-		$reportLabel .= ", TS=" . $txsString;
-	}
-
-	if ($package->{tangleSmells} > 0 or $package->{complexitySmells} > 0) {
-		$fontColor = "fontcolor=crimson";
-	}
-
-	my $packagePath = $prefix . $package->{name};
-
-	if ($package->{level} > $start) {
-		$graph .= drawNodePackageGraph(
-			$package, $prefix, $functionDrawer, $start, $stop,
-			$root, $packagePath, $reportLabel, $fontColor);
-	}
-
-	if ($package->{level} == $start and
-		index($packagePath, $root) eq 0 and
-		($package->{level} <= $stop or $stop eq 0)) {
-		$graph .= drawLeafPackageGraph(
-			$package, $prefix, $functionDrawer, $start, $reportLabel, $fontColor);
-	}
-	return $graph;
-}
-
-sub drawFunctionGraph {
-	my ($package, $prefix) = @_;
-	my $graph = "";
-	foreach (keys %{$package->{functions}}) {
-		my $functionComplexityString = sprintf("%.0f", $package->{calculatedComplexity}*100);
-		my $xsString = sprintf("%.0f", $package->{complexitySmells});
-		$graph .= $prefix . $package->{name} . " [style=filled, label=\"" . $package->{name};
-		if ($package->{complexitySmells} > 0) {
-			$graph .= "\\nC=" . $functionComplexityString . "%";
-			$graph .= ", CS=" . $xsString;
-			$graph .= "\", fontcolor=black, color=crimson";
-		} else {
-			$graph .= "\", color=grey, fontcolor=black";
-		}
-		$graph .= "];\n";
-	}
-
-	while (my ($calleename, $callee) = each(%{$package->{deps}})) {
-		$graph .= $prefix . $package->{name} . "->" . $prefix . $calleename;
-		$graph .= " [label=" . $callee;
-		$graph .= exists($package->{circ}->{$calleename}) ? ", color=crimson, fontcolor=crimson, style=bold" : "";
-		$graph .= "];\n";
-	}
-	return $graph;
-}
-
-sub drawGraph {
-	my ($package, $prefix, $functionDrawer, $start, $stop, $root) = @_;
-	my $graphCreator = exists($package->{nodes}) ?  \&drawPackageGraph : $functionDrawer;
-	return $graphCreator->($package, $prefix, $functionDrawer, $start, $stop, $root);
+sub drawPackage {
+	my ($package, $levels, $root) = @_;
+	return ((index($package->{location}, $root) ne 0) and
+		(index($root, $package->{location}) ne 0)) ?
+		drawEmpty() :
+		((!checkIterate($package, $levels, $root)) ?
+			drawLeafPackage($package, $levels, $root) :
+			((index($package->{location}, $root) ne 0) ?
+				$package->{iterate} :
+				drawNode($package, $levels, $root)));
 }
 
 sub drawEmpty {
 	return "";
 }
 
-sub createSystemGraphReport {
-	my ($node, $functionDrawer, $start, $stop, $root) = @_;
-	my $graph = "digraph system {\ncompound=true;\n";
-	my $quality = calculateQuality($node->{totSize}, $node->{totSmells});
-	$graph .= "labelloc=t;\nlabel=\"Total Smells:" . sprintf("%.0f", $node->{totSmells});
-	$graph .= ", Quality:" .  sprintf("%.0f", $quality) . "%\\n";
-	my $smells = createSortedSmellsList($node);
-	my $index = 0;
-	my $report = "";
-	for (my $i = 0; $i < 5 && $i < @{$smells}; $i++) {
-		my $smell = @{$smells}[$i];
-		$report .= $smell->{value} > 0 ? $smell->{name} . ": " . $smell->{type} . " Smells:" . sprintf("%.0f", $smell->{value}) . "\\n" : "";
+sub drawIterate {
+	my ($node, $levels, $root) = @_;
+	return join("", map({draw($_, $levels, $root);}
+		values %{$node->{nodes}}));
+}
+
+sub drawFunctionColor {
+	my ($function) = @_;
+	return ($function->{complexitySmells} > 0) ?
+		"fontcolor=black, color=crimson" :
+		"color=grey, fontcolor=black";
+}
+
+sub drawFunction {
+	my ($function) = @_;
+	return "\"" . $function->{path} . "\"" .
+		" [style=filled, label=\"" . drawNameLabel($function) . "\\n" .
+		drawComplexityLabel($function) . "\", " .
+		drawFunctionColor($function) . "\];\n" .
+		$function->{drawDependencies}($function);
+}
+
+sub drawLeafFileHeader {
+	my ($file) = @_;
+	return "\"" . $file->{path} . "\"" .
+		" [" . drawReportColor($file) .
+		", label=\"{" . drawNameLabel($file) . "|" .
+		drawReportLabel($file, "\\n") .
+		"|}\", shape=record, style=filled];\n";
+}
+
+sub drawLeafFile {
+	my ($file, $levels, $root) = @_;
+	return drawLeafFileHeader($file) .
+		$file->{drawDependencies}($file, $levels, $root);
+}
+
+sub draw {
+	my ($node, $levels, $root) = @_;
+	return $node->{draw}($node, $levels, $root);
+}
+
+sub extractSmells {
+	my ($node, $smells, $rootLength) = @_;
+	my $name = (($rootLength > length($node->{location}) ? "" :
+		substr($node->{location}, $rootLength))) . "/" .
+		drawNameLabel($node);
+	push (@{$smells}, initSmell($name, "Tangle",
+		$node->{tangleSmells}));
+	push (@{$smells}, initSmell($name, "Complexity",
+		$node->{complexitySmells}));
+	if (exists($node->{nodes})) {
+		foreach my $node (values %{$node->{nodes}}) {
+			extractSmells($node, $smells, $rootLength);
+		}
 	}
-	$graph .= $report . "\";\n";
-	$graph .= drawGraph($node, "", $functionDrawer, $start, $stop, $root);
-	$graph .= "}\n";
-	return $graph;
+}
+
+sub createSortedSmellsList {
+	my ($node, $rootLength) = @_;
+	my $smells = [];
+	extractSmells($node, $smells, $rootLength);
+	return [sort {$b->{value} <=> $a->{value}} @{$smells}];
+}
+
+sub createSmellText {
+	my ($smell) = @_;
+	return $smell->{value} > 0 ? $smell->{name} . ": " . $smell->{type} .
+		" Smells:" . sprintf("%.0f", $smell->{value}) : "";
+}
+
+sub createSmellTopFiveText {
+	my ($node, $rootLength) = @_;
+	return join("\\n", map({createSmellText($_);}
+		(values(@{createSortedSmellsList($node, $rootLength)}))[0..4]));
+}
+
+sub createSystemGraphReport {
+	my ($node, $levels, $root) = @_;
+	return "digraph system {\ncompound=true;\n" .
+		"labelloc=t;\nlabel=\"Total Smells:" .
+		sprintf("%.0f", $node->{totSmells}) . ", Quality:" .
+		sprintf("%.0f", calculateQuality($node->{totSize},
+		$node->{totSmells})) .
+		"%\\n" . createSmellTopFiveText($node, length($root)) .
+		"\";\n" . draw($node, $levels, $root) . "}\n";
+}
+
+sub createSmellListText {
+	my ($node, $rootLength) = @_;
+	return join("\n", map({createSmellText($_);}
+		values(@{createSortedSmellsList($node, $rootLength)})));
 }
 
 sub createSystemTextReport {
-	my ($node) = @_;
+	my ($node, $levels, $root) = @_;
 	my $quality = calculateQuality($node->{totSize}, $node->{totSmells});
-	my $report = "Arqua Report:\n";
-	$report .= "----------------------------------------\n";
-	$report .= "Total Smells:" . sprintf("%.0f", $node->{totSmells}) . "\n";
-	$report .= "Quality:" .  sprintf("%.0f", $quality) . "%\n";
-	$report .= "----------------------------------------\n";
-	$report .= "Top Smells:\n";
-	$report .= "----------------------------------------\n";
-	my $smells = createSortedSmellsList($node);
-	$report .= join("", map({
-		$_->{value} > 0 ? $_->{name} . ": " . $_->{type} . " Smells:" . sprintf("%.0f", $_->{value}) . "\n" : "";
-	} values @{$smells}));
-	return $report;
+	return "Arqua Report:\n" .
+		"----------------------------------------\n" .
+		"Total Smells:" . sprintf("%.0f", $node->{totSmells}) . "\n" .
+		"Quality:" .  sprintf("%.0f", $quality) . "%\n" .
+		"----------------------------------------\n" .
+		"Top Smells:\n" .
+		"----------------------------------------\n" .
+		createSmellListText($node, length($root));
 }
 
 sub main() {
 	my $reportType = "graph";
-	my $packageTolerance = 35;
+	my $nodeTolerance = 35;
 	my $functionTolerance = 5;
-	my $showFunctions = 0;
+	my $functions = 0;
+	my $files = 0;
+	my $packages= 0;
+	my $levels = 10000;
 	my $root = "";
-	my $start = 1;
-	my $stop = 0;
-	my $functionDrawer = \&drawEmpty;
+	my $package = initPackage("root", "", "");
+	my $function = "";
 	my $report = {
 		graph => \&createSystemGraphReport,
 		text => \&createSystemTextReport
 	};
 
 	GetOptions(
-		"start=i" => \$start,
-		"stop=i" => \$stop,
+		"levels=i" => \$levels,
 		"root=s" => \$root,
-		"functions" => \$showFunctions,
-		"pt=i" => \$packageTolerance,
+		"packages" => \$packages,
+		"functions" => \$functions,
+		"files" => \$files,
+		"nt=i" => \$nodeTolerance,
 		"ft=i" => \$functionTolerance,
 		"report=s" => \$reportType);
 
-	$root =~ s/\///g;
-	$root =~ s/-/_/g;
+	$root = "/root/" . $root;
+	$levels += 1;
 
-	my $package = initPackage("");
-	my $function = "";
-
-	if ($start < 1) {
-		$functionDrawer = \&drawFunctionGraph;
-	} elsif ($showFunctions) {
-		$functionDrawer = \&drawFunctionList;
-	}
-
+	$packageDrawer = $packages ? \&drawPackage : \&drawIterate;
+	$fileDrawer = $files ?
+		($functions ? \&drawNode : \&drawLeafFile) : \&drawIterate;
+	$functionDrawer = $functions ? \&drawFunction : \&drawEmpty;
+	$dependencyDrawer = $packages ?
+		($files ?
+			\&drawCheckedDependencies :
+			\&drawCheckedNotFilesDependencies) :
+		($files ?
+			\&drawCheckedNotPackagesDependencies :
+			\&drawEmpty);
 	while (<>) {
-		my ($filePath) = split(/\./, $ARGV);
-		$filePath =~ s/-/_/g;
-		$function = parseExpandLinePackage($package, $filePath, $_, $function);
+		my $filePath = $ARGV;
+		$function = parse($package, $filePath, $_, $function);
 	}
-	calculateNode($package, $functionTolerance, $packageTolerance);
-	print $report->{$reportType}($package, $functionDrawer, $start, $stop, $root);
+	calculate($package, $functionTolerance, $nodeTolerance);
+	print $report->{$reportType}($package, $levels, $root);
 }
 
 main();
