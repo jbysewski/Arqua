@@ -207,7 +207,6 @@ sub calculateNodeChildCall {
 		}
 		$parent->{depfuncs}->{$calleeFunc} += $calleeFuncNbr;
 	}
-	print "\n";
 }
 
 sub calculateNodeChildCalls {
