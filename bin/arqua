@@ -187,63 +187,77 @@ sub parse {
 		parseFunction($node, $line, $currentFunction);
 }
 
+sub calculateNodeChildCall {
+	my ($node, $parent, $calleeFunc, $calleeFuncNbr) = @_;
+	my $calleeFound = 0;
+	while (my ($calleeName, $callee) = each(%{$parent->{nodes}})) {
+		if (exists($callee->{functions}->{$calleeFunc})) {
+			unless (exists($node->{deps}->{$calleeName})) {
+				$node->{deps}->{$calleeName} = 0;
+				$parent->{complexity} += 1;
+			}
+			$node->{deps}->{$calleeName} += $calleeFuncNbr;
+			$parent->{edges} += $calleeFuncNbr;
+			$calleeFound = 1;
+		}
+	}
+	unless ($calleeFound) {
+		unless (exists($parent->{depfuncs}->{$calleeFunc})) {
+			$parent->{depfuncs}->{$calleeFunc} = 0;
+		}
+		$parent->{depfuncs}->{$calleeFunc} += $calleeFuncNbr;
+	}
+	print "\n";
+}
+
+sub calculateNodeChildCalls {
+	my ($node, $parent) = @_;
+	while (my ($calleeFunc, $calleeFuncNbr) = each(%{$node->{depfuncs}})) {
+		calculateNodeChildCall($node,
+			$parent, $calleeFunc, $calleeFuncNbr);
+	}
+}
+
 sub calculateNodeCalls {
 	my ($node) = @_;
-	foreach my $callernode (values %{$node->{nodes}}) {
-		 while (my ($calleefunc, $calleefuncnbr) = each(%{$callernode->{depfuncs}})) {
-			my $calleefound = 0;
-			while (my ($calleenodename, $calleenode) = each(%{$node->{nodes}})) {
-				if (exists($calleenode->{functions}->{$calleefunc})) {
-					unless (exists($callernode->{deps}->{$calleenodename})) {
-						$callernode->{deps}->{$calleenodename} = 0;
-						$node->{complexity} += 1;
-					}
-					$callernode->{deps}->{$calleenodename} += $calleefuncnbr;
-					$node->{edges} += $calleefuncnbr;
-					$calleefound = 1;
-				}
-			}
-			unless ($calleefound) {
-				unless (exists($node->{depfuncs}->{$calleefunc})) {
-					$node->{depfuncs}->{$calleefunc} = 0;
-				}
-				$node->{depfuncs}->{$calleefunc} += $calleefuncnbr;
-			}
+	foreach my $child (values %{$node->{nodes}}) {
+		calculateNodeChildCalls($child, $node);
+	}
+}
+
+sub calculateNodeTangle {
+	my ($node, $caller, $callerNbr, $callerName, $calleeName) = @_;
+	my $callee = $node->{nodes}->{$calleeName};
+	if (exists($caller->{deps}->{$calleeName}) and
+		exists($callee->{deps}->{$callerName})) {
+		my $calleeNbr = $callee->{deps}->{$callerName};
+		if ($callerNbr >= $calleeNbr) {
+			$callee->{circ}->{$callerName} = 1;
 		}
+		if ($callerNbr <= $calleeNbr) {
+			$caller->{circ}->{$calleeName} = 1;
+		}
+		$node->{tangle} += min($callerNbr, $calleeNbr);
 	}
 }
 
 sub calculateNodeTangles {
 	my ($node) = @_;
-	my $tmpTangle = 0;
-	while (my ($callername, $caller) = each(%{$node->{nodes}})) {
-		while (my ($calleename, $callee) = each(%{$caller->{deps}})) {
-			if (exists($caller->{deps}->{$calleename}) and
-				exists($node->{nodes}->{$calleename}->{deps}->{$callername})) {
-				my $callernbr = $callee;
-				my $calleenbr = $node->{nodes}->{$calleename}->{deps}->{$callername};
-				if ($callernbr > $calleenbr) {
-					if (exists($node->{nodes}->{$calleename})) {
-						$node->{nodes}->{$calleename}->{circ}->{$callername} = 1;
-					}
-				} elsif ($callernbr < $calleenbr) {
-					$caller->{circ}->{$calleename} = 1;
-				} else {
-					$caller->{circ}->{$calleename} = 1;
-					if (exists($node->{nodes}->{$calleename})) {
-						$node->{nodes}->{$calleename}->{circ}->{$callername} = 1;
-					}
-				}
-				$tmpTangle += min($callernbr, $calleenbr);
-			}
+	$node->{tangle} = 0;
+	while (my ($callerName, $caller) = each(%{$node->{nodes}})) {
+		while (my ($calleeName, $callerNbr) =
+			each(%{$caller->{deps}})) {
+			calculateNodeTangle($node,
+				$caller, $callerNbr, $callerName, $calleeName);
 		}
 	}
-	$node->{tangle} = $tmpTangle/2;
+	$node->{tangle} = $node->{tangle}/2;
 	$node->{calculatedTangle} =
 		calculateTangle($node->{tangle}, $node->{edges});
 	$node->{tangleSmells} = $node->{size}*$node->{calculatedTangle};
 	$node->{totSmells} += $node->{tangleSmells};
 }
+
 sub calculateNodeComplexity {
 	my ($node, $tolerance) = @_;
 	$node->{calculatedComplexity} =
@@ -252,17 +266,29 @@ sub calculateNodeComplexity {
 	$node->{totSmells} += $node->{complexitySmells};
 
 }
-sub calculateNode {
+
+sub calculateNodeChild {
+	my ($node, $parent, $functionTolerance, $tolerance) = @_;
+	$node->{level} = $parent->{level} + 1;
+	calculate($node, $functionTolerance, $tolerance);
+	foreach my $function (keys %{$node->{functions}}) {
+		$parent->{functions}->{$function} = 1;
+	}
+	$parent->{size} += $node->{size};
+	$parent->{totSmells} += $node->{totSmells};
+}
+
+sub calculateNodeChildren {
 	my ($node, $functionTolerance, $tolerance) = @_;
 	foreach my $child (values %{$node->{nodes}}) {
-		$child->{level} = $node->{level} + 1;
-		calculate($child, $functionTolerance, $tolerance);
-		foreach my $function (keys %{$child->{functions}}) {
-			$node->{functions}->{$function} = 1;
-		}
-		$node->{size} += $child->{size};
-		$node->{totSmells} += $child->{totSmells};
+		calculateNodeChild($child,
+			$node, $functionTolerance, $tolerance);
 	}
+}
+
+sub calculateNode {
+	my ($node, $functionTolerance, $tolerance) = @_;
+	calculateNodeChildren($node, $functionTolerance, $tolerance);
 	$node->{totSize} = $node->{size}*2;
 	calculateNodeCalls($node);
 	calculateNodeTangles($node);
