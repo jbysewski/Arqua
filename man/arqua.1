@@ -2,45 +2,121 @@
 .SH NAME
 arqua \- generate an architectural quality report for a GCC project
 .SH SYNOPSIS
+
 .B arqua
-.B [-functions]
-.B [-root root_path]
-.B [-start
-.I start_level
-.B ]
-.B [-stop
-.I stop_level
-.B ]
-.B [-pct
-.I package_complexity_threshold
-.B ]
-.B [-fct
-.I function_complexity_threshold
-.B ]
+
 .B [-report
 .I report_type
 .B ]
+
+.B [-root
+.I root_path
+.B ]
+
+.B [-packages]
+
+.B [-files]
+
+.B [-functions]
+
+.B [-levels
+.I number_of_levels
+.B ]
+
+.B [-nt
+.I node_complexity_threshold
+.B ]
+
+.B [-ft
+.I function_complexity_threshold
+.B ]
+
 <rtl_file>...
 .SH DESCRIPTION
-.B arqua
+Arqua is a tool used to visualize software structure and complexity.
+
+Arqua parses RTL, an intermediate format used by gcc, and generates a graph in 
+the dot language to be parsed by [Graphviz](http://www.graphviz.org). The graph 
+visualizes complex functions, files and directories as well as tangles between 
+these.
+Use the following command to get gcc to write an RTL file when compiling:
+
+	gcc -c -fdump-rtl-expand file.c
+
+This generates an RTL file, usually with the name _file.c.104r.expand_ (the 
+name may vary from system to system). Now use Arqua and generate a dot file:
+
+	arqua -functions file.c.104r.expand > file.dot
+
+The file can now be viewed directly with a dot file viewer or you can use the 
+Graphviz tools to generate an image, for instance a png image:
+
+	dot file.dot -Tpng -ofile.png
+
+Run Arqua on a directory structure of files by inputing all files with their 
+relative path to Arqua:
+
+	arqua -files -packages dir1/file1.c.104.r.expand dir2/file2.c.104.r.expand > dirs.dot
+
+This will generate a graph visualizing both files and directories.
+
+.SH OPTIONS
+.IP -report
+Arqua can create text list of smells instead of a graph using -report text. 
+When used all other options are ignored. Default is graph
+.IP -root
+Sets what root directory to start from when generating a graph. The analysis 
+and calculation is still done from the working directory. Default is the 
+current working directory.
+.IP -packages
+Tells Arqua to draw packages (directories). Default is off.
+.IP -files
+Tells Arqua to draw files. Default is off.
+.IP -functions
+Tells Arqua to draw functions.
+.IP -levels
+Sets the number of abstraction levels to traverse. Default is all.
+.IP -ft
+Sets the function complexity threshold (max number of allowed _if_then_else_ 
+RTL instructions). Default is 5.
+.IP -nt
+Set the node (directory and file) complexity threshold (max number of allowed 
+edges in a node). Default is 35.
+
+.SH EXAMPLES
+Here follows a few examples. In each example it is assumed that _$FILES_ 
+contains a list of RTL files with their path relative to the root of the 
+system.
+
+Example 1:
+Draw the top 3 directories and all files directly within them:
+
+	arqua -packages -files -levels 3 $FILES > system.dot
+
+	dot system.dot -Tpng -osystem.png
+
+Example 2:
+Generate a list of smells of a system:
+
+	arqua -report text $FILES > system.txt
+
+Example 3:
+Draw the files and their internal call graphs for all files within the folder 
+adir/bdir:
+
+	arqua -files -functions -levels 3 -root adir/bdir $FILES > system.dot
+
+	dot system.dot -Tpng -osystem.png
+
+
+Note that -root only filter out data and that -levels is still needed to 
+traverse down into the directories.
 uses GCC's intermediate RTL format to analyse the structure
 of a program and generate an architectural quality report.
 The report can be either a text list of 'smells', or a graph
 in the Graphviz DOT language. Arqua is based on the ideas from the call graph
 tool egypt.
-.SH ARCHITECTURAL QUALITY
-Arqua specifies two types of 'smells'; complexity smells, and tangle smells.
-Tangle smells are simply circular dependencies between functions or packages
-(files or folders).
-.SH OPTIONS
-.IP -functions
-.IP "-root root_path"
-.IP "-start start_level"
-.IP "-stop stop_level"
-.IP "-pct package_complexity_threshold"
-.IP "-fct function_complexity_threshold"
-.IP "-report report_type"
 .SH AUTHOR
-Magnus Ernstsson
+Magnus Ernstsson <magnus@ernstsson.net>
 .SH SEE ALSO
 gcc(1), egypt(1), dotty(1), dot(1), neato(1)
