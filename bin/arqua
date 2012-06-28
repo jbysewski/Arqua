@@ -607,12 +607,12 @@ sub draw {
 
 sub extractSmells {
 	my ($node, $smells, $rootLength) = @_;
-	my $name = (($rootLength > length($node->{location}) ? "" :
-		substr($node->{location}, $rootLength))) . "/" .
+	my $name = ($rootLength > length($node->{location}))? "/" :
+		substr($node->{location}, $rootLength) . "/" .
 		drawNameLabel($node);
-	push (@{$smells}, initSmell($name, "Tangle",
+	push (@{$smells}, initSmell($name, "T",
 		$node->{tangleSmells}));
-	push (@{$smells}, initSmell($name, "Complexity",
+	push (@{$smells}, initSmell($name, "C",
 		$node->{complexitySmells}));
 	if (exists($node->{nodes})) {
 		foreach my $node (values %{$node->{nodes}}) {
@@ -630,8 +630,8 @@ sub createSortedSmellsList {
 
 sub createSmellText {
 	my ($smell) = @_;
-	return $smell->{value} > 0 ? $smell->{name} . ": " . $smell->{type} .
-		" Smells:" . sprintf("%.0f", $smell->{value}) : "";
+	return $smell->{value} > 0 ? $smell->{name} . " " . $smell->{type} .
+		"S: " . sprintf("%.0f", $smell->{value}) : "";
 }
 
 sub createSmellTopFiveText {
