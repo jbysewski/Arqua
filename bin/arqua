@@ -288,7 +288,7 @@ sub calculateNodeChildren {
 sub calculateNode {
 	my ($node, $functionTolerance, $tolerance) = @_;
 	calculateNodeChildren($node, $functionTolerance, $tolerance);
-	$node->{totSize} = $node->{size}*2;
+	$node->{totSize} = $node->{size}*4;
 	calculateNodeCalls($node);
 	calculateNodeTangles($node);
 	calculateNodeComplexity($node, $tolerance);
