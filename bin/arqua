@@ -8,6 +8,20 @@ my $dependencyDrawer = \&drawEmpty;
 my $functionDrawer = \&drawEmpty;
 my $fileDrawer = \&drawEmpty;
 
+my $colorHash = {
+	10 => "white",
+	9 => "/greens9/2",
+	8 => "/greens9/3",
+	7 => "/greens9/4",
+	6 => "/greens9/5",
+	5 => "/greens9/6",
+	4 => "/greens9/7",
+	3 => "/greens9/8",
+	2 => "/greens9/8",
+	1 => "/greens9/9",
+	0 => "/greens9/9",
+};
+
 sub initPackage {
 	my ($name, $location, $parent) = @_;
 	return {
@@ -22,6 +36,9 @@ sub initPackage {
 		deps => {},
 		functions => {},
 		size => 0,
+		calculatedTangle => 0,
+		calculatedComplexity => 0,
+		quality => 0,
 		nodes => {},
 		depfuncs => {},
 		circ => {},
@@ -50,7 +67,9 @@ sub initFile {
 		tangle => 0,
 		complexity => 0,
 		edges => 0,
-
+		calculatedTangle => 0,
+		calculatedComplexity => 0,
+		quality => 0,
 		functions => {},
 		size => 0,
 		nodes => {},
@@ -86,6 +105,9 @@ sub initFunction {
 		depfuncs => {},
 		tangleSmells => 0,
 		complexitySmells => 0,
+		calculatedTangle => 0,
+		calculatedComplexity => 0,
+		quality => 0,
 		draw =>  sub {
 			return $functionDrawer->(@_);
 		},
@@ -109,12 +131,12 @@ sub calculateQuality {
 
 sub calculateComplexity {
 	my ($value, $tolerance) = @_;
-	return $value > 0 ? max(0, ($value - $tolerance)/$value) : 0;
+	return $value > 0 ? max(0, 100*(($value - $tolerance)/$value)) : 0;
 }
 
 sub calculateTangle {
 	my ($tangles, $edges) = @_;
-	return $edges > 0 ? $tangles/$edges*2 : 0;
+	return $edges > 0 ? 100*($tangles/$edges*2) : 0;
 }
 
 sub increaseComplexity {
@@ -253,7 +275,7 @@ sub calculateNodeTangles {
 	$node->{tangle} = $node->{tangle}/2;
 	$node->{calculatedTangle} =
 		calculateTangle($node->{tangle}, $node->{edges});
-	$node->{tangleSmells} = $node->{size}*$node->{calculatedTangle};
+	$node->{tangleSmells} = $node->{size}*$node->{calculatedTangle}/100;
 	$node->{totSmells} += $node->{tangleSmells};
 }
 
@@ -261,7 +283,8 @@ sub calculateNodeComplexity {
 	my ($node, $tolerance) = @_;
 	$node->{calculatedComplexity} =
 		calculateComplexity($node->{complexity}, $tolerance);
-	$node->{complexitySmells} = $node->{size}*$node->{calculatedComplexity};
+	$node->{complexitySmells} =
+		$node->{size}*$node->{calculatedComplexity}/100;
 	$node->{totSmells} += $node->{complexitySmells};
 
 }
@@ -292,6 +315,8 @@ sub calculateNode {
 	calculateNodeCalls($node);
 	calculateNodeTangles($node);
 	calculateNodeComplexity($node, $tolerance);
+	$node->{quality} = calculateQuality(
+		$node->{totSize}, $node->{totSmells});
 }
 
 sub calculateFunction {
@@ -299,8 +324,11 @@ sub calculateFunction {
 	$function->{calculatedComplexity} =
 		calculateComplexity($function->{complexity}, $tolerance);
 	$function->{complexitySmells} =
-		$function->{size}*$function->{calculatedComplexity};
+		$function->{size}*$function->{calculatedComplexity}/100;
 	$function->{totSmells} = $function->{complexitySmells};
+	$function->{totSize} = $function->{size};
+	$function->{quality} = calculateQuality(
+		$function->{totSize}, $function->{totSmells});
 }
 
 sub calculate {
@@ -312,60 +340,69 @@ sub calculate {
 
 sub drawComplexitySmells {
 	my ($node) = @_;
-	return "CS=" . sprintf("%.0f", $node->{complexitySmells});
+	return sprintf("%.0f", $node->{complexitySmells});
 }
 
 sub drawComplexityPercentage {
 	my ($node) = @_;
-	return "C=" . sprintf("%.0f", $node->{calculatedComplexity}*100) . "%";
+	return sprintf("%.0f", $node->{calculatedComplexity}) . "%";
 }
 
 sub drawTangleSmells {
 	my ($node) = @_;
-	return "TS=" . sprintf("%.0f", $node->{tangleSmells});
+	return sprintf("%.0f", $node->{tangleSmells});
 }
 
 sub drawTanglePercentage {
 	my ($node) = @_;
-	return "T=" . sprintf("%.0f", $node->{calculatedTangle}*100) . "%";
+	return sprintf("%.0f", $node->{calculatedTangle}) . "%";
+}
+
+sub drawQualityPercentage {
+	my ($node) = @_;
+	return sprintf("%.0f", int($node->{quality})) . "%";
+}
+
+sub drawQualityLabel {
+	my ($node) = @_;
+	return ($node->{quality} < 100) ?
+		"Q=" . drawQualityPercentage($node) : "";
 }
 
 sub drawComplexityLabel {
 	my ($node) = @_;
-	return (($node->{complexitySmells} > 0) ?
-		(drawComplexityPercentage($node) .
-		", ".
-		drawComplexitySmells($node)) : "");
+	return (($node->{calculatedComplexity} > 0) ?
+		"C=" . drawComplexityPercentage($node) :
+		"");
 }
 
 sub drawTangleLabel {
 	my ($node) = @_;
-	return ($node->{tangleSmells} > 0) ?
-		drawTanglePercentage($node) .
-		", ".
-		drawTangleSmells($node) : "";
+	return ($node->{calculatedTangle} > 0) ?
+		"T=" . drawTanglePercentage($node) :
+		"";
 }
 
 sub drawReportLabel {
-	my ($node, $glue) = @_;
-	$glue = (($node->{tangleSmells} > 0) and
-		($node->{complexitySmells} > 0)) ?
-		$glue : "";
-	return drawComplexityLabel($node) .
-		$glue .
+	my ($node) = @_;
+	return drawQualityLabel($node) .
+		" " .
+		drawComplexityLabel($node) .
+		" " .
 		drawTangleLabel($node);
 }
 
 sub drawNameLabel {
 	my ($node) = @_;
-	return $node->{name};
+	$node->{name} =~ /(^[^\.]+)/;
+	return $1;
 }
 
 sub drawReportColor {
-	my ($node) = @_;
-	return ($node->{tangleSmells} > 0 or $node->{complexitySmells} > 0) ?
-		"fontcolor=crimson" :
-		"fontcolor=black";
+	my ($node, $glue) = @_;
+	my $color = $colorHash->{int($node->{quality}/10)};
+	my $fontColor = ($node->{quality}/40 > 1) ? "black" : "white";
+	return "fontcolor=\"$fontColor\"$glue fillcolor=\"$color\"";
 }
 
 sub drawDependencyColor {
@@ -480,9 +517,9 @@ sub drawCheckedNotFilesDependencies {
 sub drawLeafPackageHeader {
 	my ($package) = @_;
 	return "\"" . $package->{path} . "\"" .
-		" [" . drawReportColor($package) .
+		" [" . drawReportColor($package, ",") .
 		", label=\"" . drawNameLabel($package) . "\\n" .
-		drawReportLabel($package, "\\n") .
+		drawReportLabel($package) .
 		"\", shape=tab, style=filled];\n";
 }
 
@@ -495,9 +532,10 @@ sub drawLeafPackage {
 sub drawNodeHeader {
 	my ($node, $levels, $root) = @_;
 	return "subgraph \"cluster_" . $node->{path} . "\"" .
-		" {\n" . drawReportColor($node) . ";label=\"" .
+		" {\n" . drawReportColor($node, ";") .
+		";style=filled;label=\"" .
 		drawNameLabel($node) .
-		"\\n" . drawReportLabel($node, ", ") . "\";\n" .
+		"\\n" . drawReportLabel($node) . "\";\n" .
 		"\"" . $node->{path} . "\"" .
 		" [style=invisible];\n" .
 		$node->{iterate} . "}\n";
@@ -542,17 +580,17 @@ sub drawFunction {
 	my ($function) = @_;
 	return "\"" . $function->{path} . "\"" .
 		" [style=filled, label=\"" . drawNameLabel($function) . "\\n" .
-		drawComplexityLabel($function) . "\", " .
-		drawFunctionColor($function) . "\];\n" .
+		drawReportLabel($function) . "\"" .
+		drawReportColor($function, ",") . "\];\n" .
 		$function->{drawDependencies}($function);
 }
 
 sub drawLeafFileHeader {
 	my ($file) = @_;
 	return "\"" . $file->{path} . "\"" .
-		" [" . drawReportColor($file) .
+		" [" . drawReportColor($file, ",") .
 		", label=\"{" . drawNameLabel($file) . "|" .
-		drawReportLabel($file, "\\n") .
+		drawReportLabel($file) .
 		"|}\", shape=record, style=filled];\n";
 }
 
@@ -607,9 +645,8 @@ sub createSystemGraphReport {
 	return "digraph system {\ncompound=true;\n" .
 		"labelloc=t;\nlabel=\"Total Smells:" .
 		sprintf("%.0f", $node->{totSmells}) . ", Quality:" .
-		sprintf("%.0f", calculateQuality($node->{totSize},
-		$node->{totSmells})) .
-		"%\\n" . createSmellTopFiveText($node, length($root)) .
+		drawQualityPercentage($node) .
+		"\\n" . createSmellTopFiveText($node, length($root)) .
 		"\";\n" . draw($node, $levels, $root) . "}\n";
 }
 
@@ -621,11 +658,10 @@ sub createSmellListText {
 
 sub createSystemTextReport {
 	my ($node, $levels, $root) = @_;
-	my $quality = calculateQuality($node->{totSize}, $node->{totSmells});
 	return "Arqua Report:\n" .
 		"----------------------------------------\n" .
 		"Total Smells:" . sprintf("%.0f", $node->{totSmells}) . "\n" .
-		"Quality:" .  sprintf("%.0f", $quality) . "%\n" .
+		"Quality:" . drawQualityPercentage($node) . "\n" .
 		"----------------------------------------\n" .
 		"Top Smells:\n" .
 		"----------------------------------------\n" .
