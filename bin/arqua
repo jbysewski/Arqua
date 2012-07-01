@@ -162,7 +162,7 @@ sub parseFunction {
 	my ($parent, $line, $currentFunction) = @_;
 	my $nodes = $parent->{nodes};
 
-	if ($line =~ /^;; Function (.*)\s+\((\S+)(,.*)?\)\s*$/) {
+	if ($line =~ /^;; Function (.*)\s+\((\S+)(,.*)?\)\s.*$/) {
 		my $name = $2;
 		unless (exists($nodes->{$name})) {
 			$nodes->{$name} = initFunction($name,
