@@ -7,6 +7,8 @@ my $packageDrawer = \&drawEmpty;
 my $dependencyDrawer = \&drawEmpty;
 my $functionDrawer = \&drawEmpty;
 my $fileDrawer = \&drawEmpty;
+my $packageUrlDrawer = \&drawEmpty;
+my $fileUrlDrawer = \&drawEmpty;
 
 my $colorHash = {
 	10 => "white",
@@ -514,10 +516,17 @@ sub drawCheckedNotFilesDependencies {
 		\&fileFilter, $levels, $root);
 }
 
+sub drawPackageUrl {
+	my ($package, $root) = @_;
+	my $url = substr($package->{path}, length($root)+1) . "/index.svg";
+	return "URL=\"$url\" ";
+}
+
 sub drawLeafPackageHeader {
-	my ($package) = @_;
+	my ($package, $root) = @_;
 	return "\"" . $package->{path} . "\"" .
-		" [" . drawReportColor($package, ",") .
+		" [" . $packageUrlDrawer->($package, $root) .
+		drawReportColor($package, ",") .
 		", label=\"" . drawNameLabel($package) . "\\n" .
 		drawReportLabel($package) .
 		"\", shape=tab, style=filled];\n";
@@ -525,14 +534,15 @@ sub drawLeafPackageHeader {
 
 sub drawLeafPackage {
 	my ($package, $levels, $root) = @_;
-	return drawLeafPackageHeader($package) .
+	return drawLeafPackageHeader($package, $root) .
 		$package->{drawDependencies}($package, $levels, $root);
 }
 
 sub drawNodeHeader {
 	my ($node, $levels, $root) = @_;
 	return "subgraph \"cluster_" . $node->{path} . "\"" .
-		" {\n" . drawReportColor($node, ";") .
+		" {\n" . drawReportColor($node, ";") . ";" .
+		$packageUrlDrawer->($node, $root) .
 		";style=filled;label=\"" .
 		drawNameLabel($node) .
 		"\\n" . drawReportLabel($node) . "\";\n" .
@@ -549,14 +559,11 @@ sub drawNode {
 
 sub drawPackage {
 	my ($package, $levels, $root) = @_;
-	return ((index($package->{location}, $root) ne 0) and
-		(index($root, $package->{location}) ne 0)) ?
-		drawEmpty() :
-		((!checkIterate($package, $levels, $root)) ?
+	return !checkIterate($package, $levels, $root) ?
 			drawLeafPackage($package, $levels, $root) :
-			((index($package->{location}, $root) ne 0) ?
+			(index($package->{location}, $root) ne 0) ?
 				$package->{iterate} :
-				drawNode($package, $levels, $root)));
+				drawNode($package, $levels, $root);
 }
 
 sub drawEmpty {
@@ -585,10 +592,19 @@ sub drawFunction {
 		$function->{drawDependencies}($function);
 }
 
+sub drawFileUrl {
+	my ($file, $root) = @_;
+	my $url = substr($file->{path}, length($root)+1) . ".svg";
+	return "URL=\"$url\" ";
+}
+
 sub drawLeafFileHeader {
-	my ($file) = @_;
+	my ($file, $root) = @_;
+
 	return "\"" . $file->{path} . "\"" .
-		" [" . drawReportColor($file, ",") .
+		" [" .
+		$fileUrlDrawer->($file, $root) .
+		drawReportColor($file, ",") .
 		", label=\"{" . drawNameLabel($file) . "|" .
 		drawReportLabel($file) .
 		"|}\", shape=record, style=filled];\n";
@@ -596,13 +612,15 @@ sub drawLeafFileHeader {
 
 sub drawLeafFile {
 	my ($file, $levels, $root) = @_;
-	return drawLeafFileHeader($file) .
+	return drawLeafFileHeader($file, $root) .
 		$file->{drawDependencies}($file, $levels, $root);
 }
 
 sub draw {
 	my ($node, $levels, $root) = @_;
-	return $node->{draw}($node, $levels, $root);
+	return ((index($node->{path}, $root) ne 0) and
+		(index($root, $node->{path}) ne 0)) ?
+		drawEmpty() : $node->{draw}($node, $levels, $root);
 }
 
 sub extractSmells {
@@ -675,6 +693,7 @@ sub main() {
 	my $functions = 0;
 	my $files = 0;
 	my $packages= 0;
+	my $urls = 0;
 	my $levels = 10000;
 	my $root = "";
 	my $package = initPackage("root", "", "");
@@ -690,12 +709,14 @@ sub main() {
 		"packages" => \$packages,
 		"functions" => \$functions,
 		"files" => \$files,
+		"urls" => \$urls,
 		"nt=i" => \$nodeTolerance,
 		"ft=i" => \$functionTolerance,
 		"report=s" => \$reportType);
 
 	$root = "/root/" . $root;
-	$levels += 1;
+	my @rootArray = split("/", $root);
+	$levels += scalar(@rootArray);
 
 	$packageDrawer = $packages ? \&drawPackage : \&drawIterate;
 	$fileDrawer = $files ?
@@ -708,12 +729,16 @@ sub main() {
 		($files ?
 			\&drawCheckedNotPackagesDependencies :
 			\&drawEmpty);
-	while (<>) {
-		my $filePath = $ARGV;
-		$function = parse($package, $filePath, $_, $function);
+	$packageUrlDrawer = $urls ? \&drawPackageUrl : \&drawEmpty;
+	$fileUrlDrawer = $urls ? \&drawFileUrl : \&drawEmpty;
+	if ($#ARGV gt -1) {
+		while (<>) {
+			my $filePath = $ARGV;
+			$function = parse($package, $filePath, $_, $function);
+		}
+		calculate($package, $functionTolerance, $nodeTolerance);
+		print $report->{$reportType}($package, $levels, $root);
 	}
-	calculate($package, $functionTolerance, $nodeTolerance);
-	print $report->{$reportType}($package, $levels, $root);
 }
 
 main();
