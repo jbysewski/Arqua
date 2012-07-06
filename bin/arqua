@@ -404,7 +404,7 @@ sub drawReportColor {
 	my ($node, $glue) = @_;
 	my $color = $colorHash->{int($node->{quality}/10)};
 	my $fontColor = ($node->{quality}/40 > 1) ? "black" : "white";
-	return "fontcolor=\"$fontColor\"$glue fillcolor=\"$color\"";
+	return "fontcolor=\"$fontColor\"" . $glue . "fillcolor=\"$color\"";
 }
 
 sub drawDependencyColor {
@@ -517,16 +517,16 @@ sub drawCheckedNotFilesDependencies {
 }
 
 sub drawPackageUrl {
-	my ($package, $root) = @_;
+	my ($package, $root, $glue) = @_;
 	my $url = substr($package->{path}, length($root)+1) . "/index.svg";
-	return "URL=\"$url\" ";
+	return "URL=\"$url\"$glue";
 }
 
 sub drawLeafPackageHeader {
 	my ($package, $root) = @_;
 	return "\"" . $package->{path} . "\"" .
-		" [" . $packageUrlDrawer->($package, $root) .
-		drawReportColor($package, ",") .
+		" [" . $packageUrlDrawer->($package, $root, ", ") .
+		drawReportColor($package, ", ") .
 		", label=\"" . drawNameLabel($package) . "\\n" .
 		drawReportLabel($package) .
 		"\", shape=tab, style=filled];\n";
@@ -542,8 +542,8 @@ sub drawNodeHeader {
 	my ($node, $levels, $root) = @_;
 	return "subgraph \"cluster_" . $node->{path} . "\"" .
 		" {\n" . drawReportColor($node, ";") . ";" .
-		$packageUrlDrawer->($node, $root) .
-		";style=filled;label=\"" .
+		$packageUrlDrawer->($node, $root, ";") .
+		"style=filled;label=\"" .
 		drawNameLabel($node) .
 		"\\n" . drawReportLabel($node) . "\";\n" .
 		"\"" . $node->{path} . "\"" .
@@ -603,7 +603,7 @@ sub drawLeafFileHeader {
 
 	return "\"" . $file->{path} . "\"" .
 		" [" .
-		$fileUrlDrawer->($file, $root) .
+		$fileUrlDrawer->($file, $root, ", ") .
 		drawReportColor($file, ",") .
 		", label=\"{" . drawNameLabel($file) . "|" .
 		drawReportLabel($file) .
