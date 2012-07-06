@@ -99,6 +99,8 @@ sub initFunction {
 		location => $location,
 		path => $location . "/" . $name,
 		complexity => 0,
+		cNodes => 0,
+		cEdges => 0,
 		size => 0,
 		totSize => 0,
 		totSmells => 0,
@@ -131,6 +133,12 @@ sub calculateQuality {
 	return $size > 0 ? 100-$smells/$size*100 : 100;
 }
 
+sub calculateCyclomaticComplexity {
+	my ($nodes, $edges) = @_;
+
+	return $edges - $nodes + 2;
+}
+
 sub calculateComplexity {
 	my ($value, $tolerance) = @_;
 	return $value > 0 ? max(0, 100*(($value - $tolerance)/$value)) : 0;
@@ -144,6 +152,16 @@ sub calculateTangle {
 sub increaseComplexity {
 	my ($node) = @_;
 	$node->{complexity} += 1;
+}
+
+sub increaseNodes {
+	my ($node) = @_;
+	$node->{cNodes} += 1;
+}
+
+sub increaseEdges {
+	my ($node) = @_;
+	$node->{cEdges} += 1;
 }
 
 sub increaseSize {
@@ -179,8 +197,15 @@ sub parseFunction {
 			increaseDependencies($node, $2);
 		}
 
-		if ($line =~ /^.*\(if_then_else.*$/) {
-			increaseComplexity($node);
+		if ($line =~ /^.*\(jump_insn.*$/) {
+			increaseEdges($node);
+			increaseEdges($node);
+			increaseNodes($node);
+		}
+
+		if ($line =~ /^.*\(code_label.*$/) {
+			increaseEdges($node);
+			increaseNodes($node);
 		}
 
 		if ($line =~ /^.*\(insn.*/) {
@@ -323,6 +348,8 @@ sub calculateNode {
 
 sub calculateFunction {
 	my ($function, $tolerance) = @_;
+	$function->{complexity} = calculateCyclomaticComplexity(
+		$function->{cNodes}, $function->{cEdges});
 	$function->{calculatedComplexity} =
 		calculateComplexity($function->{complexity}, $tolerance);
 	$function->{complexitySmells} =
@@ -689,7 +716,7 @@ sub createSystemTextReport {
 sub main() {
 	my $reportType = "graph";
 	my $nodeTolerance = 35;
-	my $functionTolerance = 5;
+	my $functionTolerance = 10;
 	my $functions = 0;
 	my $files = 0;
 	my $packages= 0;
