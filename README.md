@@ -49,8 +49,9 @@ the working directory.
 * -functions (default:off) Tells arqua to draw functions.
 * -levels [number of levels] (default:all) Sets the number of abstraction levels 
 to traverse.
-* -ft [function complexity threshold] (default:5) Sets the function complexity 
-threshold (max number of allowed _if_then_else_ RTL instructions)
+* -ft [function complexity threshold] (default:10) Sets the function complexity 
+threshold (max allowed cyclomatic complexity of the RTL representation of the 
+function))
 * -nt [node complexity threshold] (default:35) Set the node (directory and file) 
 complexity threshold (max number of allowed edges in a node)
 
