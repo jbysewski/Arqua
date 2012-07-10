@@ -568,6 +568,7 @@ sub drawLeafPackage {
 
 sub drawNodeHeader {
 	my ($node, $levels, $root) = @_;
+	checkIterate($node, $levels, $root);
 	return "subgraph \"cluster_" . $node->{path} . "\"" .
 		" {\n" . drawReportColor($node, ";") . ";" .
 		$packageUrlDrawer->($node, $root, ";") .
