@@ -576,7 +576,7 @@ sub drawNodeHeader {
 		drawNameLabel($node) .
 		"\\n" . drawReportLabel($node) . "\";\n" .
 		"\"" . $node->{path} . "\"" .
-		" [style=invisible];\n" .
+		" [shape=none, label=\"\", width=0, style=invisible];\n" .
 		$node->{iterate} . "}\n";
 }
 
