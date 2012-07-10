@@ -5,6 +5,7 @@ use Getopt::Long;
 
 my $packageDrawer = \&drawEmpty;
 my $dependencyDrawer = \&drawEmpty;
+my $summaryDrawer = \&drawEmpty;
 my $functionDrawer = \&drawEmpty;
 my $fileDrawer = \&drawEmpty;
 my $packageUrlDrawer = \&drawEmpty;
@@ -685,14 +686,20 @@ sub createSmellTopFiveText {
 		(values(@{createSortedSmellsList($node, $rootLength)}))[0..4]));
 }
 
-sub createSystemGraphReport {
-	my ($node, $levels, $root) = @_;
-	return "digraph system {\ncompound=true;\n" .
-		"labelloc=t;\nlabel=\"Total Smells:" .
+sub drawSummary {
+	my ($node, $root) = @_;
+	return "labelloc=t;\nlabel=\"Total Smells:" .
 		sprintf("%.0f", $node->{totSmells}) . ", Quality:" .
 		drawQualityPercentage($node) .
 		"\\n" . createSmellTopFiveText($node, length($root)) .
-		"\";\n" . draw($node, $levels, $root) . "}\n";
+		"\";\n";
+}
+
+sub createSystemGraphReport {
+	my ($node, $levels, $root) = @_;
+	return "digraph system {\ncompound=true;\n" .
+		$summaryDrawer->($node, $root) .
+		draw($node, $levels, $root) . "}\n";
 }
 
 sub createSmellListText {
@@ -721,6 +728,7 @@ sub main() {
 	my $files = 0;
 	my $packages= 0;
 	my $urls = 0;
+	my $nosummary = 0;
 	my $levels = 10000;
 	my $root = "";
 	my $package = initPackage("root", "", "");
@@ -737,6 +745,7 @@ sub main() {
 		"functions" => \$functions,
 		"files" => \$files,
 		"urls" => \$urls,
+		"nosummary" => \$nosummary,
 		"nt=i" => \$nodeTolerance,
 		"ft=i" => \$functionTolerance,
 		"report=s" => \$reportType);
@@ -745,6 +754,7 @@ sub main() {
 	my @rootArray = split("/", $root);
 	$levels += scalar(@rootArray);
 
+	$summaryDrawer = $nosummary ? \&drawEmpty : \&drawSummary;
 	$packageDrawer = $packages ? \&drawPackage : \&drawIterate;
 	$fileDrawer = $files ?
 		($functions ? \&drawNode : \&drawLeafFile) : \&drawIterate;
