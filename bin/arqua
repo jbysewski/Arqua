@@ -202,6 +202,7 @@ sub parseLLVMFunction {
 
 		if ($line =~ /^  (br|switch|indirectbr).*$/) {
 			increaseEdges($node);
+			increaseEdges($node);
 		}
 
 		increaseSize($node);
