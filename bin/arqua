@@ -4,6 +4,7 @@ use List::Util qw[min max];
 use Getopt::Long;
 
 my $packageDrawer = \&drawEmpty;
+my $parseFunction = \&parseGCCFunction;
 my $dependencyDrawer = \&drawEmpty;
 my $summaryDrawer = \&drawEmpty;
 my $functionDrawer = \&drawEmpty;
@@ -179,7 +180,36 @@ sub increaseDependencies {
 	$node->{depfuncs}->{$callee} += 1;
 }
 
-sub parseFunction {
+sub parseLLVMFunction {
+	my ($parent, $line, $currentFunction) = @_;
+	my $nodes = $parent->{nodes};
+
+	if ($line =~ /^define.*@([a-zA-Z$._][a-zA-Z$._0-9]*).*\{$/) {
+		my $name = $1;
+		unless (exists($nodes->{$name})) {
+			$nodes->{$name} = initFunction($name,
+				$parent->{path});
+		}
+		return $name;
+	} elsif ($line =~ /^\}$/) {
+		$currentFunction = "";
+	} elsif ($currentFunction ne "" and
+		exists($nodes->{$currentFunction})) {
+		my $node = $nodes->{$currentFunction};
+		foreach ($line =~ m/@([a-zA-Z$._][a-zA-Z$._0-9]*)/g) {
+			increaseDependencies($node, $_);
+		}
+
+		if ($line =~ /^  (br|switch|indirectbr).*$/) {
+			increaseEdges($node);
+		}
+
+		increaseSize($node);
+	}
+	return $currentFunction;
+}
+
+sub parseGCCFunction {
 	my ($parent, $line, $currentFunction) = @_;
 	my $nodes = $parent->{nodes};
 
@@ -234,7 +264,7 @@ sub parse {
 	my ($node, $path, $line, $currentFunction) = @_;
 	return $path ?
 		parseNode($node, $path, $line, $currentFunction) :
-		parseFunction($node, $line, $currentFunction);
+		$parseFunction->($node, $line, $currentFunction);
 }
 
 sub calculateNodeChildCall {
@@ -734,6 +764,7 @@ sub main() {
 	my $root = "";
 	my $package = initPackage("root", "", "");
 	my $function = "";
+	my $llvm = 0;
 	my $report = {
 		graph => \&createSystemGraphReport,
 		text => \&createSystemTextReport
@@ -746,6 +777,7 @@ sub main() {
 		"functions" => \$functions,
 		"files" => \$files,
 		"urls" => \$urls,
+		"llvm" => \$llvm,
 		"nosummary" => \$nosummary,
 		"nt=i" => \$nodeTolerance,
 		"ft=i" => \$functionTolerance,
@@ -754,6 +786,8 @@ sub main() {
 	$root = "/root/" . $root;
 	my @rootArray = split("/", $root);
 	$levels += scalar(@rootArray);
+
+	$parseFunction = $llvm ? \&parseLLVMFunction : \&parseGCCFunction;
 
 	$summaryDrawer = $nosummary ? \&drawEmpty : \&drawSummary;
 	$packageDrawer = $packages ? \&drawPackage : \&drawIterate;
