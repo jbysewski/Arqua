@@ -196,7 +196,7 @@ sub parseLLVMFunction {
 	} elsif ($currentFunction ne "" and
 		exists($nodes->{$currentFunction})) {
 		my $node = $nodes->{$currentFunction};
-		foreach ($line =~ m/@([a-zA-Z$._][a-zA-Z$._0-9]*)/g) {
+		foreach ($line =~ m/@([a-zA-Z\$\._][a-zA-Z\$\._0-9]*)/g) {
 			increaseDependencies($node, $_);
 		}
 
