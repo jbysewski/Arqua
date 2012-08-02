@@ -11,6 +11,7 @@ my $functionDrawer = \&drawEmpty;
 my $fileDrawer = \&drawEmpty;
 my $packageUrlDrawer = \&drawEmpty;
 my $fileUrlDrawer = \&drawEmpty;
+my $nodeTangleCalculator = \&calculateNodeTangle;
 
 my $colorHash = {
 	10 => "white",
@@ -321,13 +322,21 @@ sub calculateNodeTangle {
 	}
 }
 
+sub calculateNodeTangleAllowRecursion {
+	my ($node, $caller, $callerNbr, $callerName, $calleeName) = @_;
+	if ($calleeName ne $callerName) {
+		calculateNodeTangle($node, $caller,
+			$callerNbr, $callerName, $calleeName);
+	}
+}
+
 sub calculateNodeTangles {
 	my ($node) = @_;
 	$node->{tangle} = 0;
 	while (my ($callerName, $caller) = each(%{$node->{nodes}})) {
 		while (my ($calleeName, $callerNbr) =
 			each(%{$caller->{deps}})) {
-			calculateNodeTangle($node,
+			$nodeTangleCalculator->($node,
 				$caller, $callerNbr, $callerName, $calleeName);
 		}
 	}
@@ -766,6 +775,7 @@ sub main() {
 	my $package = initPackage("root", "", "");
 	my $function = "";
 	my $llvm = 0;
+	my $recursion = 0;
 	my $report = {
 		graph => \&createSystemGraphReport,
 		text => \&createSystemTextReport
@@ -782,11 +792,17 @@ sub main() {
 		"nosummary" => \$nosummary,
 		"nt=i" => \$nodeTolerance,
 		"ft=i" => \$functionTolerance,
+		"recursion" => \$recursion,
 		"report=s" => \$reportType);
 
 	$root = "/root/" . $root;
 	my @rootArray = split("/", $root);
 	$levels += scalar(@rootArray);
+
+	$functionTolerance = $llvm ? 30 : 10;
+
+	$nodeTangleCalculator = $recursion ?
+		\&calculateNodeTangleAllowRecursion :\&calculateNodeTangle;
 
 	$parseFunction = $llvm ? \&parseLLVMFunction : \&parseGCCFunction;
 
